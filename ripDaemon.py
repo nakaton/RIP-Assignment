@@ -1,5 +1,7 @@
 """
-    sys.argv[0]: configure file
+RIP Assignment
+
+    sys.argv[1]: configure file for each router
 """
 import sys
 import configparser
@@ -42,38 +44,37 @@ routing_table = []
 is_periodic_send_on_process = False
 
 
-def print_routing_table(event):
-    """Print routing table for each event"""
-    print(">>> " + str(time.asctime(time.localtime(time.time()))) + " On Process Event: " + event)
-    print(">>> Routing Table for Router: " + str(my_router_id))
-    print("+-----------------------------------------------------------------------------------------+")
-    print("| Destination | Metric | Next Hop Id | Route Change |      Timeout      |     Garbage     |")
-    print("+-----------------------------------------------------------------------------------------+")
+#########################################################################################
+#                      <Beginning stage>: Read Configuration File                       #
+#########################################################################################
+def read_config(config_file):
+    """Read Configuration File"""
+    config = configparser.ConfigParser()
+    config.read(config_file)  # Configure File from Shell Parameter
 
-    content_format = "|{0:^13}|{1:^8}|{2:^13}|{3:^14}|{4:^19}|{5:^17}|"
+    # TODO: config file check
 
-    for table_line in routing_table:
-        if table_line["destination"] != my_router_id:
-            if table_line["timeout"] is None:
-                timeout = "-"
-            else:
-                timeout = int(table_line["timeout"]) - time.time()
+    global my_router_id, input_ports, outputs
+    my_router_id = int(config.get('Settings', 'router-id'))
+    input_ports = config.get('Settings', 'input-ports').split(', ')
+    outputs = config.get('Settings', 'outputs').split(', ')
 
-            if table_line["garbage_collect"] is None:
-                garbage = "-"
-            else:
-                garbage = int(table_line["garbage_collect"]) - time.time()
+    # add self into routing table
+    table_line = {
+        "destination": my_router_id,
+        "metric": 0,
+        "next_hop_id": my_router_id,
+        "route_change_flag": False,
+        "timeout": None,
+        "garbage_collect": None
+    }
 
-            if table_line["route_change_flag"] is None:
-                route_change = "-"
-            else:
-                route_change = table_line["route_change_flag"]
-
-            print(content_format.format(table_line["destination"], table_line["metric"], table_line["next_hop_id"],
-                                        str(route_change), str(timeout), str(garbage)))
-            print("+-----------------------------------------------------------------------------------------+")
+    routing_table.append(table_line)
 
 
+#########################################################################################
+#                         <Next stage>: Bind Socket for inputPorts                      #
+#########################################################################################
 def bind_socket():
     """Bind socket for each input port"""
     if len(input_ports) > 0:
@@ -89,36 +90,62 @@ def bind_socket():
     return sockets
 
 
-def create_packet_header():
-    """Create common header for the RIP packet"""
+#########################################################################################
+#                   <Final stage>: infinite loop for incoming events                    #
+#########################################################################################
+def event_handler():
+    """Operation for coming event"""
 
-    command = 2
-    version = 2
+    print(">>> Event Handler Start")
+    # Initiate Periodic Timer Unsolicited RIP Response
+    init_timer()
 
-    command = command.to_bytes(1, byteorder='big', signed=False)
-    version = version.to_bytes(1, byteorder='big', signed=False)
-    sender = my_router_id.to_bytes(2, byteorder='big', signed=False)
+    # Start a Timeout timer for this specific entry
+    init_timeout_timer()
 
-    header = command + version + sender
+    # Start a Garbage Collection timer for this specific entry
+    init_garbage_collection_timer()
 
-    return header
+    # print('Current active thread: {}'.format(threading.activeCount()))
+
+    message_queues = {}
+
+    # RIP daemon to keep monitoring the incoming data
+    while True:
+        readable, writable, exceptional = select.select(sockets, [], sockets)
+
+        # get data from neighbour router
+        for readable_item in readable:
+            read_data = readable_item.recvfrom(1024)  # result: tuple(data, address)
+            data = read_data[0]
+            address = read_data[1]
+
+            # print("read_data from readable: " + str(read_data))
+            # print("receive from %s:%s" % (address, data))
+
+            message_queues[address[1]] = queue.Queue()  # Create message queue for each connection
+
+            if data:
+                message_queues[address[1]].put(data)
+
+        # process received data from neighbour router
+        for key in message_queues.keys():
+            try:
+                q = message_queues[key]
+                # for each message in each message queue
+                while not q.empty():
+                    q_data = q.get_nowait()
+                    # check for consistency then parse if it is clean, drop if not
+                    if data_consistency_check(q_data):
+                        parse_rip_packet(q_data)
+
+            except KeyError:
+                continue
 
 
-def create_packet_rip_entry(destination, metric):
-    """Creates a RIP Entry for RIP packet"""
-
-    afi = ADDRESS_FAMILY_IDENTIFIER.to_bytes(2, byteorder='big', signed=False)
-    must_be_zero1 = MUST_BE_ZERO.to_bytes(2, byteorder='big', signed=False)
-    destination = destination.to_bytes(4, byteorder='big', signed=False)
-    must_be_zero2 = MUST_BE_ZERO.to_bytes(4, byteorder='big', signed=False)
-    next_hop = my_router_id.to_bytes(4, byteorder='big', signed=False)
-    metric = int(metric).to_bytes(4, byteorder='big', signed=False)
-
-    entry = afi + must_be_zero1 + destination + must_be_zero2 + next_hop + metric
-
-    return entry
-
-
+#########################################################################################
+#                                RIP Packet Create Relate                               #
+#########################################################################################
 def create_output_packet(is_update_only):
     """Create send packet by combining common header and RIP Entry"""
 
@@ -150,6 +177,41 @@ def create_output_packet(is_update_only):
     return packets
 
 
+#########################################################################################
+def create_packet_header():
+    """Create common header for the RIP packet"""
+
+    command = 2
+    version = 2
+
+    command = command.to_bytes(1, byteorder='big', signed=False)
+    version = version.to_bytes(1, byteorder='big', signed=False)
+    sender = my_router_id.to_bytes(2, byteorder='big', signed=False)
+
+    header = command + version + sender
+
+    return header
+
+
+#########################################################################################
+def create_packet_rip_entry(destination, metric):
+    """Creates a RIP Entry for RIP packet"""
+
+    afi = ADDRESS_FAMILY_IDENTIFIER.to_bytes(2, byteorder='big', signed=False)
+    must_be_zero1 = MUST_BE_ZERO.to_bytes(2, byteorder='big', signed=False)
+    destination = destination.to_bytes(4, byteorder='big', signed=False)
+    must_be_zero2 = MUST_BE_ZERO.to_bytes(4, byteorder='big', signed=False)
+    next_hop = my_router_id.to_bytes(4, byteorder='big', signed=False)
+    metric = int(metric).to_bytes(4, byteorder='big', signed=False)
+
+    entry = afi + must_be_zero1 + destination + must_be_zero2 + next_hop + metric
+
+    return entry
+
+
+#########################################################################################
+#                                Send Out RIP Response                                  #
+#########################################################################################
 def send_update_response(is_update_only):
     """Send RIP response periodic or by route invalid trigger"""
     readable, writable, exceptional = select.select([], [sockets[0]], [])
@@ -171,238 +233,9 @@ def send_update_response(is_update_only):
     print_routing_table("send_unsolicited_response")
 
 
-def send_unsolicited_response():
-    """Send unsolicited RIP response periodic"""
-
-    print(">>> Periodic Timer Start")
-
-    global is_periodic_send_on_process
-    is_periodic_send_on_process = True  # periodic send is on process
-
-    send_update_response(is_update_only=False)  # send out entire routing table
-
-    is_periodic_send_on_process = False  # periodic send is finish
-
-    # Create Timer offset
-    random_offset = random.randint(-5, 5)
-    period = PERIODIC_TIME + random_offset
-
-    global periodic_timer
-    periodic_timer.cancel()
-    periodic_timer = threading.Timer(period, send_unsolicited_response, [])
-    periodic_timer.start()
-
-    print(">>> Periodic Timer Re-Initiate. " + "Timer period: " + str(period))
-
-
-def init_timer():
-    """Initiate Periodic Timer for sending unsolicited response"""
-    global periodic_timer
-    periodic_timer = threading.Timer(PERIODIC_TIME, send_unsolicited_response, [])
-    periodic_timer.start()
-
-    print(">>> Periodic Timer Initiate")
-
-
-def process_route_timeout():
-    """Process route timeout"""
-
-    print(">>> Timeout Timer Start")
-
-    for table_line in routing_table:
-        destination = table_line["destination"]
-
-        if destination != my_router_id:
-            if table_line["timeout"] is None or time.time() < table_line["timeout"]:
-                # Entry already updated again after Timeout timer initialized.
-                # Or Metric is updated to 16 and trigger garbage collection Timer.
-                # Pass and wait next started Timer to process
-                pass
-            else:
-                next_hop_id = table_line["next_hop_id"]
-                update_routing_table(destination, MAX_METRIC, next_hop_id, route_change=True)
-
-    # Create Timer offset
-    random_offset = random.randint(-5, 5)
-    period = CHECK_TIME + random_offset
-
-    global timeout_timer
-    timeout_timer.cancel()
-    timeout_timer = threading.Timer(period, process_route_timeout, [])
-    timeout_timer.start()
-
-    print(">>> Timeout Timer Re-Initiate. " + "Timer period: " + str(period))
-
-
-def init_timeout_timer():
-    """Initiate Timeout Timer for checking route status"""
-    global timeout_timer
-    timeout_timer = threading.Timer(CHECK_TIME, process_route_timeout, [])
-    timeout_timer.start()
-
-    print(">>> Timeout Timer Initiate")
-
-
-def process_garbage_collection():
-    """Process garbage collection"""
-
-    print(">>> Garbage collection Timer Start")
-
-    for table_line in routing_table:
-        destination = table_line["destination"]
-
-        if destination != my_router_id:
-            if table_line["garbage_collect"] is None or time.time() < table_line["garbage_collect"]:
-                # Entry already updated again after Garbage Collection timer initialized.
-                # Or route is updated to valid and trigger Timeout Timer.
-                # Pass and wait next started Timer to process
-                pass
-            else:
-                entry_index = get_entry_index(destination)
-                routing_table.pop(entry_index)  # delete garbage route from routing table
-
-    # Create Timer offset
-    random_offset = random.randint(-5, 5)
-    period = CHECK_TIME + random_offset
-
-    global garbage_collection_timer
-    garbage_collection_timer.cancel()
-    garbage_collection_timer = threading.Timer(period, process_garbage_collection, [])
-    garbage_collection_timer.start()
-
-    print(">>> Garbage Collection Timer Re-Initiate. " + "Timer period: " + str(period))
-
-
-def init_garbage_collection_timer():
-    """Initiate Garbage Collection Timer for removing invalid route"""
-    global garbage_collection_timer
-    garbage_collection_timer = threading.Timer(CHECK_TIME, process_garbage_collection, [])
-    garbage_collection_timer.start()
-
-    print(">>> Garbage Collection Timer Initiate")
-
-
-def data_consistency_check(packet):
-    """Perform consistency checks on incoming packets:
-    have fixed fields the right values? is the metric in the right range?
-    Non-conforming packets should be dropped"""
-    is_valid = True
-    number_of_entries = int((len(packet) - 4) / 20)  # common header size: 1 + 1 + 2 = 4 ;   Each Entry size: 20
-
-    command = int(packet[0])
-    version = int(packet[1])
-
-    entries = packet[4:]
-    for i in range(0, number_of_entries):
-        entry = entries[(i * 20):((i + 1) * 20)]
-        metric = int(entry[16] + entry[17] + entry[18] + entry[19])  # metric: last 4 bits
-        if metric < 0 or metric > 16:
-            is_valid = False
-
-    if command != 2:  # 2: response
-        is_valid = False
-
-    if version != 2:  # 2: version 2
-        is_valid = False
-
-    return is_valid
-
-
-def get_entry(router_id):
-    """Returns entry in routing table by specific router id"""
-    if len(routing_table) > 0:
-        for table_line in routing_table:
-            if int(table_line["destination"]) == router_id:
-                return table_line
-
-    return None
-
-
-def is_destination_exist(destination):
-    """Check whether received destination already exist in routing table"""
-    if len(routing_table) > 0:
-        for table_line in routing_table:
-            if int(table_line["destination"]) == destination:
-                return True
-
-    return False
-
-
-def get_entry_index(router_id):
-    """Get specific router id's index in routing table"""
-    for i in range(0, len(routing_table)):
-        if routing_table[i]["destination"] == router_id:
-            return i
-
-    return None
-
-
-def add_routing_table(destination, total_metric, next_hop_id):
-    """add new route into routing table"""
-    table_line = {
-        "destination": destination,
-        "metric": total_metric,
-        "next_hop_id": next_hop_id,
-        "route_change_flag": True,
-        "timeout": time.time() + TIME_OUT,
-        "garbage_collect": None
-    }
-    routing_table.append(table_line)
-    print_routing_table("add_routing_table")
-
-
-def update_routing_table(destination, total_metric, next_hop_id, route_change):
-    """update routing table according according to new received packet"""
-    if total_metric >= 16:
-        table_line = {
-            "destination": destination,
-            "metric": total_metric,
-            "next_hop_id": next_hop_id,
-            "route_change_flag": route_change,
-            "timeout": None,
-            "garbage_collect": time.time() + GARBAGE_COLLECT_TIME
-        }
-
-        index = get_entry_index(destination)
-        routing_table[index] = table_line
-        print_routing_table("update_routing_table --- total_metric >= 16")
-
-        # Trigger a response due to route invalid
-        if is_periodic_send_on_process:
-            # suppress triggered update when a regular update is due by the time
-            pass
-        else:
-            send_update_response(is_update_only=True)  # send out updated route only
-    else:
-        table_line = {
-            "destination": destination,
-            "metric": total_metric,
-            "next_hop_id": next_hop_id,
-            "route_change_flag": route_change,
-            "timeout": time.time() + TIME_OUT,
-            "garbage_collect": None
-        }
-
-        index = get_entry_index(destination)
-        routing_table[index] = table_line
-        print_routing_table("update_routing_table --- total_metric < 16")
-
-
-def clear_route_change_flags():
-    """Clear route change flags"""
-    for i in range(0, len(routing_table)):
-        routing_table[i]["route_change_flag"] = False
-
-
-def get_config_metric(router_id):
-    """get metric from config for specific router"""
-    for output in outputs:
-        neighbour = int(output.split('-')[2])
-        if router_id == neighbour:
-            return output.split('-')[1]
-    return None
-
-
+#########################################################################################
+#                            Receive and Parse RIP Packet                               #
+#########################################################################################
 def parse_rip_packet(packet):
     """Get routing information out of incoming RIP packet and update routing table"""
     sender = int(packet[2] + packet[3])
@@ -456,81 +289,296 @@ def parse_rip_packet(packet):
             add_routing_table(destination, total_metric, sender)
 
 
-def event_handler():
-    """Operation for coming event"""
-
-    print(">>> Event Handler Start")
-    # Initiate Periodic Timer Unsolicited RIP Response
-    init_timer()
-
-    # Start a Timeout timer for this specific entry
-    init_timeout_timer()
-
-    # Start a Garbage Collection timer for this specific entry
-    init_garbage_collection_timer()
-
-    # print('Current active thread: {}'.format(threading.activeCount()))
-
-    message_queues = {}
-
-    # RIP daemon to keep monitoring the incoming data
-    while True:
-        readable, writable, exceptional = select.select(sockets, [], sockets)
-
-        # get data from neighbour router
-        for readable_item in readable:
-            read_data = readable_item.recvfrom(1024)  # result: tuple(data, address)
-            data = read_data[0]
-            address = read_data[1]
-
-            # print("read_data from readable: " + str(read_data))
-            # print("receive from %s:%s" % (address, data))
-
-            message_queues[address[1]] = queue.Queue()  # Create message queue for each connection
-
-            if data:
-                message_queues[address[1]].put(data)
-
-        # process received data from neighbour router
-        for key in message_queues.keys():
-            try:
-                q = message_queues[key]
-                # for each message in each message queue
-                while not q.empty():
-                    q_data = q.get_nowait()
-                    # check for consistency then parse if it is clean, drop if not
-                    if data_consistency_check(q_data):
-                        parse_rip_packet(q_data)
-
-            except KeyError:
-                continue
-
-
-def read_config(config_file):
-    """Read Configuration File"""
-    config = configparser.ConfigParser()
-    config.read(config_file)  # Configure File from Shell Parameter
-
-    # TODO: config file check
-
-    global my_router_id, input_ports, outputs
-    my_router_id = int(config.get('Settings', 'router-id'))
-    input_ports = config.get('Settings', 'input-ports').split(', ')
-    outputs = config.get('Settings', 'outputs').split(', ')
-
-    # add self into routing table
+#########################################################################################
+#                               Routing Table Operation                                 #
+#########################################################################################
+def add_routing_table(destination, total_metric, next_hop_id):
+    """add new route into routing table"""
     table_line = {
-        "destination": my_router_id,
-        "metric": 0,
-        "next_hop_id": my_router_id,
-        "route_change_flag": False,
-        "timeout": None,
+        "destination": destination,
+        "metric": total_metric,
+        "next_hop_id": next_hop_id,
+        "route_change_flag": True,
+        "timeout": time.time() + TIME_OUT,
         "garbage_collect": None
     }
-
     routing_table.append(table_line)
+    print_routing_table("add_routing_table")
 
 
+#########################################################################################
+def update_routing_table(destination, total_metric, next_hop_id, route_change):
+    """update routing table according according to new received packet"""
+    if total_metric >= 16:
+        table_line = {
+            "destination": destination,
+            "metric": total_metric,
+            "next_hop_id": next_hop_id,
+            "route_change_flag": route_change,
+            "timeout": None,
+            "garbage_collect": time.time() + GARBAGE_COLLECT_TIME
+        }
+
+        index = get_entry_index(destination)
+        routing_table[index] = table_line
+        print_routing_table("update_routing_table --- total_metric >= 16")
+
+        # Trigger a response due to route invalid
+        if is_periodic_send_on_process:
+            # suppress triggered update when a regular update is due by the time
+            pass
+        else:
+            send_update_response(is_update_only=True)  # send out updated route only
+    else:
+        table_line = {
+            "destination": destination,
+            "metric": total_metric,
+            "next_hop_id": next_hop_id,
+            "route_change_flag": route_change,
+            "timeout": time.time() + TIME_OUT,
+            "garbage_collect": None
+        }
+
+        index = get_entry_index(destination)
+        routing_table[index] = table_line
+        print_routing_table("update_routing_table --- total_metric < 16")
+
+
+#########################################################################################
+#                                    Timer Relate                                       #
+#########################################################################################
+def init_timer():
+    """Initiate Periodic Timer for sending unsolicited response"""
+    global periodic_timer
+    periodic_timer = threading.Timer(PERIODIC_TIME, send_unsolicited_response, [])
+    periodic_timer.start()
+
+    print(">>> Periodic Timer Initiate")
+
+
+#########################################################################################
+def init_timeout_timer():
+    """Initiate Timeout Timer for checking route status"""
+    global timeout_timer
+    timeout_timer = threading.Timer(CHECK_TIME, process_route_timeout, [])
+    timeout_timer.start()
+
+    print(">>> Timeout Timer Initiate")
+
+
+#########################################################################################
+def init_garbage_collection_timer():
+    """Initiate Garbage Collection Timer for removing invalid route"""
+    global garbage_collection_timer
+    garbage_collection_timer = threading.Timer(CHECK_TIME, process_garbage_collection, [])
+    garbage_collection_timer.start()
+
+    print(">>> Garbage Collection Timer Initiate")
+
+
+#########################################################################################
+def send_unsolicited_response():
+    """Send unsolicited RIP response periodic"""
+
+    print(">>> Periodic Timer Start")
+
+    global is_periodic_send_on_process
+    is_periodic_send_on_process = True  # periodic send is on process
+
+    send_update_response(is_update_only=False)  # send out entire routing table
+
+    is_periodic_send_on_process = False  # periodic send is finish
+
+    # Create Timer offset
+    random_offset = random.randint(-5, 5)
+    period = PERIODIC_TIME + random_offset
+
+    global periodic_timer
+    periodic_timer.cancel()
+    periodic_timer = threading.Timer(period, send_unsolicited_response, [])
+    periodic_timer.start()
+
+    print(">>> Periodic Timer Re-Initiate. " + "Timer period: " + str(period))
+
+
+#########################################################################################
+def process_route_timeout():
+    """Process route timeout"""
+
+    print(">>> Timeout Timer Start")
+
+    for table_line in routing_table:
+        destination = table_line["destination"]
+
+        if destination != my_router_id:
+            if table_line["timeout"] is None or time.time() < table_line["timeout"]:
+                # Entry already updated again after Timeout timer initialized.
+                # Or Metric is updated to 16 and trigger garbage collection Timer.
+                # Pass and wait next started Timer to process
+                pass
+            else:
+                next_hop_id = table_line["next_hop_id"]
+                update_routing_table(destination, MAX_METRIC, next_hop_id, route_change=True)
+
+    # Create Timer offset
+    random_offset = random.randint(-5, 5)
+    period = CHECK_TIME + random_offset
+
+    global timeout_timer
+    timeout_timer.cancel()
+    timeout_timer = threading.Timer(period, process_route_timeout, [])
+    timeout_timer.start()
+
+    print(">>> Timeout Timer Re-Initiate. " + "Timer period: " + str(period))
+
+
+#########################################################################################
+def process_garbage_collection():
+    """Process garbage collection"""
+
+    print(">>> Garbage collection Timer Start")
+
+    for table_line in routing_table:
+        destination = table_line["destination"]
+
+        if destination != my_router_id:
+            if table_line["garbage_collect"] is None or time.time() < table_line["garbage_collect"]:
+                # Entry already updated again after Garbage Collection timer initialized.
+                # Or route is updated to valid and trigger Timeout Timer.
+                # Pass and wait next started Timer to process
+                pass
+            else:
+                entry_index = get_entry_index(destination)
+                routing_table.pop(entry_index)  # delete garbage route from routing table
+
+    # Create Timer offset
+    random_offset = random.randint(-5, 5)
+    period = CHECK_TIME + random_offset
+
+    global garbage_collection_timer
+    garbage_collection_timer.cancel()
+    garbage_collection_timer = threading.Timer(period, process_garbage_collection, [])
+    garbage_collection_timer.start()
+
+    print(">>> Garbage Collection Timer Re-Initiate. " + "Timer period: " + str(period))
+
+
+#########################################################################################
+#                               Print Routing Table                                     #
+#########################################################################################
+def print_routing_table(event):
+    """Print routing table for each event"""
+    print(">>> " + str(time.asctime(time.localtime(time.time()))) + " On Process Event: " + event)
+    print(">>> Routing Table for Router: " + str(my_router_id))
+    print("+-----------------------------------------------------------------------------------------+")
+    print("| Destination | Metric | Next Hop Id | Route Change |      Timeout      |     Garbage     |")
+    print("+-----------------------------------------------------------------------------------------+")
+
+    content_format = "|{0:^13}|{1:^8}|{2:^13}|{3:^14}|{4:^19}|{5:^17}|"
+
+    for table_line in routing_table:
+        if table_line["destination"] != my_router_id:
+            if table_line["timeout"] is None:
+                timeout = "-"
+            else:
+                timeout = int(table_line["timeout"]) - time.time()
+
+            if table_line["garbage_collect"] is None:
+                garbage = "-"
+            else:
+                garbage = int(table_line["garbage_collect"]) - time.time()
+
+            if table_line["route_change_flag"] is None:
+                route_change = "-"
+            else:
+                route_change = table_line["route_change_flag"]
+
+            print(content_format.format(table_line["destination"], table_line["metric"], table_line["next_hop_id"],
+                                        str(route_change), str(timeout), str(garbage)))
+            print("+-----------------------------------------------------------------------------------------+")
+
+
+#########################################################################################
+#                                    Utils                                              #
+#########################################################################################
+def data_consistency_check(packet):
+    """Perform consistency checks on incoming packets:
+    have fixed fields the right values? is the metric in the right range?
+    Non-conforming packets should be dropped"""
+    is_valid = True
+    number_of_entries = int((len(packet) - 4) / 20)  # common header size: 1 + 1 + 2 = 4 ;   Each Entry size: 20
+
+    command = int(packet[0])
+    version = int(packet[1])
+
+    entries = packet[4:]
+    for i in range(0, number_of_entries):
+        entry = entries[(i * 20):((i + 1) * 20)]
+        metric = int(entry[16] + entry[17] + entry[18] + entry[19])  # metric: last 4 bits
+        if metric < 0 or metric > 16:
+            is_valid = False
+
+    if command != 2:  # 2: response
+        is_valid = False
+
+    if version != 2:  # 2: version 2
+        is_valid = False
+
+    return is_valid
+
+
+#########################################################################################
+def get_entry(router_id):
+    """Returns entry in routing table by specific router id"""
+    if len(routing_table) > 0:
+        for table_line in routing_table:
+            if int(table_line["destination"]) == router_id:
+                return table_line
+
+    return None
+
+
+#########################################################################################
+def get_entry_index(router_id):
+    """Get specific router id's index in routing table"""
+    for i in range(0, len(routing_table)):
+        if routing_table[i]["destination"] == router_id:
+            return i
+
+    return None
+
+
+#########################################################################################
+def get_config_metric(router_id):
+    """get metric from config for specific router"""
+    for output in outputs:
+        neighbour = int(output.split('-')[2])
+        if router_id == neighbour:
+            return output.split('-')[1]
+    return None
+
+
+#########################################################################################
+def is_destination_exist(destination):
+    """Check whether received destination already exist in routing table"""
+    if len(routing_table) > 0:
+        for table_line in routing_table:
+            if int(table_line["destination"]) == destination:
+                return True
+
+    return False
+
+
+#########################################################################################
+def clear_route_change_flags():
+    """Clear route change flags"""
+    for i in range(0, len(routing_table)):
+        routing_table[i]["route_change_flag"] = False
+
+
+#########################################################################################
+#                                    Main                                               #
+#########################################################################################
 def main():
     """Create RIP Daemon Instance Step by Step"""
     # <Beginning stage>: Read Configuration File
