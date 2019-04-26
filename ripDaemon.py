@@ -25,8 +25,8 @@ garbage_collection_timer = None
 
 # Timer control
 PERIODIC_TIME = 10  # default 30
-TIME_OUT = 180  # default 180
-GARBAGE_COLLECT_TIME = 120  # default 120
+TIME_OUT = 50  # default 180
+GARBAGE_COLLECT_TIME = 30  # default 120
 CHECK_TIME = 5  # Value can be adjusted (purpose is to to check timeout and garbage collection for routing table)
 
 # Router Config Data
@@ -164,7 +164,7 @@ def create_output_packet(is_update_only):
                     if table_line["route_change_flag"] == "False":
                         continue
 
-                if table_line["next_hop_id"] == neighbour and table_line["destination"] != neighbour:
+                if str(table_line["next_hop_id"]) == neighbour and str(table_line["destination"]) != neighbour:
                     entry = create_packet_rip_entry(table_line["destination"], 16)  # poisoned reverse
                 else:
                     entry = create_packet_rip_entry(table_line["destination"], table_line["metric"])
@@ -286,7 +286,9 @@ def parse_rip_packet(packet):
                     update_routing_table(destination, total_metric, sender, route_change=True)
 
         else:
-            add_routing_table(destination, total_metric, sender)
+            # Only when destination is valid, add to routing table
+            if total_metric < MAX_METRIC:
+                add_routing_table(destination, total_metric, sender)
 
 
 #########################################################################################
@@ -353,7 +355,7 @@ def init_timer():
     periodic_timer = threading.Timer(PERIODIC_TIME, send_unsolicited_response, [])
     periodic_timer.start()
 
-    print(">>> Periodic Timer Initiate")
+    # print(">>> Periodic Timer Initiate")
 
 
 #########################################################################################
@@ -363,7 +365,7 @@ def init_timeout_timer():
     timeout_timer = threading.Timer(CHECK_TIME, process_route_timeout, [])
     timeout_timer.start()
 
-    print(">>> Timeout Timer Initiate")
+    # print(">>> Timeout Timer Initiate")
 
 
 #########################################################################################
@@ -373,14 +375,14 @@ def init_garbage_collection_timer():
     garbage_collection_timer = threading.Timer(CHECK_TIME, process_garbage_collection, [])
     garbage_collection_timer.start()
 
-    print(">>> Garbage Collection Timer Initiate")
+    # print(">>> Garbage Collection Timer Initiate")
 
 
 #########################################################################################
 def send_unsolicited_response():
     """Send unsolicited RIP response periodic"""
 
-    print(">>> Periodic Timer Start")
+    # print(">>> Periodic Timer Start")
 
     global is_periodic_send_on_process
     is_periodic_send_on_process = True  # periodic send is on process
@@ -398,14 +400,14 @@ def send_unsolicited_response():
     periodic_timer = threading.Timer(period, send_unsolicited_response, [])
     periodic_timer.start()
 
-    print(">>> Periodic Timer Re-Initiate. " + "Timer period: " + str(period))
+    # print(">>> Periodic Timer Re-Initiate. " + "Timer period: " + str(period))
 
 
 #########################################################################################
 def process_route_timeout():
     """Process route timeout"""
 
-    print(">>> Timeout Timer Start")
+    # print(">>> Timeout Timer Start")
 
     for table_line in routing_table:
         destination = table_line["destination"]
@@ -429,14 +431,14 @@ def process_route_timeout():
     timeout_timer = threading.Timer(period, process_route_timeout, [])
     timeout_timer.start()
 
-    print(">>> Timeout Timer Re-Initiate. " + "Timer period: " + str(period))
+    # print(">>> Timeout Timer Re-Initiate. " + "Timer period: " + str(period))
 
 
 #########################################################################################
 def process_garbage_collection():
     """Process garbage collection"""
 
-    print(">>> Garbage collection Timer Start")
+    # print(">>> Garbage collection Timer Start")
 
     for table_line in routing_table:
         destination = table_line["destination"]
@@ -460,7 +462,7 @@ def process_garbage_collection():
     garbage_collection_timer = threading.Timer(period, process_garbage_collection, [])
     garbage_collection_timer.start()
 
-    print(">>> Garbage Collection Timer Re-Initiate. " + "Timer period: " + str(period))
+    # print(">>> Garbage Collection Timer Re-Initiate. " + "Timer period: " + str(period))
 
 
 #########################################################################################
@@ -468,6 +470,7 @@ def process_garbage_collection():
 #########################################################################################
 def print_routing_table(event):
     """Print routing table for each event"""
+    print(" ")
     print(">>> " + str(time.asctime(time.localtime(time.time()))) + " On Process Event: " + event)
     print(">>> Routing Table for Router: " + str(my_router_id))
     print("+-----------------------------------------------------------------------------------------+")
@@ -481,12 +484,12 @@ def print_routing_table(event):
             if table_line["timeout"] is None:
                 timeout = "-"
             else:
-                timeout = int(table_line["timeout"]) - time.time()
+                timeout = int(table_line["timeout"]) - int(time.time())
 
             if table_line["garbage_collect"] is None:
                 garbage = "-"
             else:
-                garbage = int(table_line["garbage_collect"]) - time.time()
+                garbage = int(table_line["garbage_collect"]) - int(time.time())
 
             if table_line["route_change_flag"] is None:
                 route_change = "-"
