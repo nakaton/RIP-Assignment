@@ -53,6 +53,7 @@ def read_config(config_file):
     config.read(config_file)  # Configure File from Shell Parameter
 
     # TODO: config file check
+    check_result = config_file_check(config)
 
     global my_router_id, input_ports, outputs
     my_router_id = int(config.get('Settings', 'router-id'))
@@ -70,6 +71,8 @@ def read_config(config_file):
     }
 
     routing_table.append(table_line)
+
+    return check_result
 
 
 #########################################################################################
@@ -531,6 +534,55 @@ def data_consistency_check(packet):
 
 
 #########################################################################################
+def config_file_check(config):
+    """Config file check"""
+    check_result = True
+
+    # TODO: wait for test
+    if config.get('Settings', 'router-id') is None:
+        check_result = False
+        print("Router ID is not set!")
+
+    if config.get('Settings', 'input-ports') is None:
+        check_result = False
+        print("Input Ports are not set!")
+
+    if config.get('Settings', 'outputs') is None:
+        check_result = False
+        print("Outputs are not set!")
+
+    if config.get('Settings', 'router-id') is not None:
+        config_router_id = int(config.get('Settings', 'router-id'))
+        if config_router_id < 1 or config_router_id > 64000:
+            check_result = False
+            print("Router ID is invalid!")
+
+    if config.get('Settings', 'input-ports') is not None:
+        config_input_ports = config.get('Settings', 'input-ports').split(', ')
+        for config_input_port in config_input_ports:
+            if config_input_port < 1024 or config_router_id > 64000:
+                check_result = False
+                print("Input Port is invalid! :" + str(config_input_port))
+
+    if config.get('Settings', 'outputs') is not None:
+        config_outputs = config.get('Settings', 'outputs').split(', ')
+        for config_output in config_outputs:
+            if config_output.split('-')[0] < 1024 or config_output.split('-')[0] > 64000:
+                check_result = False
+                print("Output Port is invalid! :" + str(config_output.split('-')[0]))
+
+            if config_output.split('-')[1] < 0 or config_output.split('-')[1] > 16:
+                check_result = False
+                print("Metric is invalid! :" + str(config_output.split('-')[1]))
+
+            if config_output.split('-')[2] < 1 or config_output.split('-')[2] > 64000:
+                check_result = False
+                print("Neighbour Router ID is invalid! :" + str(config_output.split('-')[2]))
+
+    return check_result
+
+
+#########################################################################################
 def get_entry(router_id):
     """Returns entry in routing table by specific router id"""
     if len(routing_table) > 0:
@@ -585,13 +637,14 @@ def clear_route_change_flags():
 def main():
     """Create RIP Daemon Instance Step by Step"""
     # <Beginning stage>: Read Configuration File
-    read_config(sys.argv[1])
+    check_result = read_config(sys.argv[1])
 
-    # <Next stage>: Bind Socket for inputPorts
-    bind_socket()
+    if check_result:
+        # <Next stage>: Bind Socket for inputPorts
+        bind_socket()
 
-    # <Final stage>: infinite loop for incoming events
-    event_handler()
+        # <Final stage>: infinite loop for incoming events
+        event_handler()
 
 
 if __name__ == '__main__':
