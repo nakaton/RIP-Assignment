@@ -91,7 +91,6 @@ def bind_socket():
             except socket.error as msg:
                 print('Failed to bind socket on port' + str(input_port) + '. Message: ' + str(msg))
                 sys.exit()
-    return sockets
 
 
 #########################################################################################
@@ -101,6 +100,7 @@ def event_handler():
     """Operation for coming event"""
 
     print(">>> Event Handler Start")
+
     # Initiate Periodic Timer Unsolicited RIP Response
     init_timer()
 
@@ -659,6 +659,7 @@ def main():
     # <Beginning stage>: Read Configuration File
     check_result = read_config(sys.argv[1])
 
+    # When any checking error from config file, following logic does not execute
     if check_result:
         # <Next stage>: Bind Socket for inputPorts
         bind_socket()
