@@ -55,7 +55,7 @@ def read_config(config_file):
     config = configparser.ConfigParser()
     config.read(config_file)  # Configure File from Shell Parameter
 
-    # TODO: config file check
+    # Config file check
     check_result = config_file_check(config)
 
     if check_result:
