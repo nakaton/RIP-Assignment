@@ -1,9 +1,0 @@
-    data = {
-        "router_id": router_id,
-        "metric": metric,
-        "next_hop": next_hop,
-        "next_hop_id": next_hop_id,
-        "route_change": False,
-        "timeout": time.time() + timeout_sleep,
-        "garbage": None
-    }

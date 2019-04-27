@@ -536,48 +536,75 @@ def data_consistency_check(packet):
 #########################################################################################
 def config_file_check(config):
     """Config file check"""
+    is_router_id_exist = False
+    is_input_ports_exist = False
+    is_outputs_exist = False
+
     check_result = True
+    print_content = ""
+    fields = []
 
-    # TODO: wait for test
-    if config.get('Settings', 'router-id') is None:
+    file = open(sys.argv[1], "r")
+
+    for line in file:
+        field = line.split("=")[0].strip()
+        fields.append(field)
+
+    for field in fields:
+        if "router-id" == field:
+            is_router_id_exist = True
+
+        if "input-ports" == field:
+            is_input_ports_exist = True
+
+        if "outputs" == field:
+            is_outputs_exist = True
+
+    # Check for "router-id" field
+    if is_router_id_exist is False:
         check_result = False
-        print("Router ID is not set!")
+        print_content += "'router-id' field is not set!\n"
+    else:
+        if config.get('Settings', 'router-id') is not None:
+            config_router_id = int(config.get('Settings', 'router-id'))
+            if config_router_id < 1 or config_router_id > 64000:
+                check_result = False
+                print_content += "Router ID is invalid!\n"
 
-    if config.get('Settings', 'input-ports') is None:
+    # Check for "input-ports" field
+    if is_input_ports_exist is False:
         check_result = False
-        print("Input Ports are not set!")
+        print_content += "'input-ports' is not set!\n"
+    else:
+        if config.get('Settings', 'input-ports') is not None:
+            config_input_ports = config.get('Settings', 'input-ports').split(', ')
+            for config_input_port in config_input_ports:
+                if int(config_input_port) < 1024 or int(config_input_port) > 64000:
+                    check_result = False
+                    print_content += "Input Port is invalid! :" + str(config_input_port) + "\n"
 
-    if config.get('Settings', 'outputs') is None:
+    # Check for "outputs" field
+    if is_outputs_exist is False:
         check_result = False
-        print("Outputs are not set!")
+        print_content += "'outputs' field is not set!\n"
+    else:
+        if config.get('Settings', 'outputs') is not None:
+            config_outputs = config.get('Settings', 'outputs').split(', ')
+            for config_output in config_outputs:
+                if int(config_output.split('-')[0]) < 1024 or int(config_output.split('-')[0]) > 64000:
+                    check_result = False
+                    print_content += "Output Port is invalid! :" + str(config_output.split('-')[0]) + "\n"
 
-    if config.get('Settings', 'router-id') is not None:
-        config_router_id = int(config.get('Settings', 'router-id'))
-        if config_router_id < 1 or config_router_id > 64000:
-            check_result = False
-            print("Router ID is invalid!")
+                if int(config_output.split('-')[1]) < 0 or int(config_output.split('-')[1]) > 16:
+                    check_result = False
+                    print_content += "Metric is invalid! :" + str(config_output.split('-')[1]) + "\n"
 
-    if config.get('Settings', 'input-ports') is not None:
-        config_input_ports = config.get('Settings', 'input-ports').split(', ')
-        for config_input_port in config_input_ports:
-            if config_input_port < 1024 or config_router_id > 64000:
-                check_result = False
-                print("Input Port is invalid! :" + str(config_input_port))
+                if int(config_output.split('-')[2]) < 1 or int(config_output.split('-')[2]) > 64000:
+                    check_result = False
+                    print_content += "Neighbour Router ID is invalid! :" + str(config_output.split('-')[2]) + "\n"
 
-    if config.get('Settings', 'outputs') is not None:
-        config_outputs = config.get('Settings', 'outputs').split(', ')
-        for config_output in config_outputs:
-            if config_output.split('-')[0] < 1024 or config_output.split('-')[0] > 64000:
-                check_result = False
-                print("Output Port is invalid! :" + str(config_output.split('-')[0]))
-
-            if config_output.split('-')[1] < 0 or config_output.split('-')[1] > 16:
-                check_result = False
-                print("Metric is invalid! :" + str(config_output.split('-')[1]))
-
-            if config_output.split('-')[2] < 1 or config_output.split('-')[2] > 64000:
-                check_result = False
-                print("Neighbour Router ID is invalid! :" + str(config_output.split('-')[2]))
+    if check_result is False:
+        print(">>> Config File check result: \n" + print_content)
 
     return check_result
 
