@@ -139,10 +139,10 @@ def event_handler():
         for key in message_queues.keys():
             try:
                 q = message_queues[key]
-                # for each message in each message queue
+                # extract data from each message queue
                 while not q.empty():
                     q_data = q.get_nowait()  # Remove and return an item from the queue without blocking.
-                    # check for consistency then parse if it is clean, drop if not
+                    # check the consistency fo the packet data
                     if data_consistency_check(q_data):
                         parse_packet(q_data)
 
@@ -521,6 +521,7 @@ def data_consistency_check(packet):
     # fixed fields' values check
     command = int(packet[0])
     version = int(packet[1])
+    sender = int(packet[2] + packet[3])
 
     if command != HEADER_COMMAND:  # 2: response
         is_valid = False
@@ -535,6 +536,10 @@ def data_consistency_check(packet):
         metric = int(entry[16] + entry[17] + entry[18] + entry[19])  # metric: last 4 bits
         if metric < 0 or metric > 16:
             is_valid = False
+
+    print(" ")
+    print(">>> Received Packet Consistency Check Result: [Command: " + str(command) + "], [Version: "
+          + str(version) + "], [Sender: " + str(sender) + "] -> is valid ? " + str(is_valid))
 
     return is_valid
 
