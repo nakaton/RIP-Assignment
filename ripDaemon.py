@@ -55,22 +55,23 @@ def read_config(config_file):
     # TODO: config file check
     check_result = config_file_check(config)
 
-    global my_router_id, input_ports, outputs
-    my_router_id = int(config.get('Settings', 'router-id'))
-    input_ports = config.get('Settings', 'input-ports').split(', ')
-    outputs = config.get('Settings', 'outputs').split(', ')
+    if check_result:
+        global my_router_id, input_ports, outputs
+        my_router_id = int(config.get('Settings', 'router-id'))
+        input_ports = config.get('Settings', 'input-ports').split(', ')
+        outputs = config.get('Settings', 'outputs').split(', ')
 
-    # add self into routing table
-    table_line = {
-        "destination": my_router_id,
-        "metric": 0,
-        "next_hop_id": my_router_id,
-        "route_change_flag": False,
-        "timeout": None,
-        "garbage_collect": None
-    }
+        # add self into routing table
+        table_line = {
+            "destination": my_router_id,
+            "metric": 0,
+            "next_hop_id": my_router_id,
+            "route_change_flag": False,
+            "timeout": None,
+            "garbage_collect": None
+        }
 
-    routing_table.append(table_line)
+        routing_table.append(table_line)
 
     return check_result
 
@@ -536,32 +537,14 @@ def data_consistency_check(packet):
 #########################################################################################
 def config_file_check(config):
     """Config file check"""
-    is_router_id_exist = False
-    is_input_ports_exist = False
-    is_outputs_exist = False
-
     check_result = True
     print_content = ""
-    fields = []
-
-    file = open(sys.argv[1], "r")
-
-    for line in file:
-        field = line.split("=")[0].strip()
-        fields.append(field)
-
-    for field in fields:
-        if "router-id" == field:
-            is_router_id_exist = True
-
-        if "input-ports" == field:
-            is_input_ports_exist = True
-
-        if "outputs" == field:
-            is_outputs_exist = True
 
     # Check for "router-id" field
-    if is_router_id_exist is False:
+    try:
+        print_content += "-----------------------------------\n"
+        config.get('Settings', 'router-id')
+    except configparser.NoOptionError:
         check_result = False
         print_content += "'router-id' field is not set!\n"
     else:
@@ -569,10 +552,13 @@ def config_file_check(config):
             config_router_id = int(config.get('Settings', 'router-id'))
             if config_router_id < 1 or config_router_id > 64000:
                 check_result = False
-                print_content += "Router ID is invalid!\n"
+                print_content += "Router ID is invalid! :" + str(config_router_id) + "\n"
 
     # Check for "input-ports" field
-    if is_input_ports_exist is False:
+    try:
+        print_content += "-----------------------------------\n"
+        config.get('Settings', 'input-ports')
+    except configparser.NoOptionError:
         check_result = False
         print_content += "'input-ports' is not set!\n"
     else:
@@ -584,7 +570,10 @@ def config_file_check(config):
                     print_content += "Input Port is invalid! :" + str(config_input_port) + "\n"
 
     # Check for "outputs" field
-    if is_outputs_exist is False:
+    try:
+        print_content += "-----------------------------------\n"
+        config.get('Settings', 'outputs')
+    except configparser.NoOptionError:
         check_result = False
         print_content += "'outputs' field is not set!\n"
     else:
@@ -675,5 +664,5 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
     print('Start a RIP Daemon Instance')
+    main()
