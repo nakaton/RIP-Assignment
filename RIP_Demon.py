@@ -313,25 +313,29 @@ def add_routing_table(destination, total_metric, next_hop_id):
 def update_routing_table(destination, total_metric, next_hop_id, route_change):
     """update routing table according according to new received packet"""
     if int(total_metric) >= 16:
-        table_line = {
-            "destination": destination,
-            "metric": total_metric,
-            "next_hop_id": next_hop_id,
-            "route_change_flag": route_change,
-            "timeout": None,
-            "garbage_collect": time.time() + GARBAGE_COLLECT_TIME
-        }
+        # Only when first time metric is 16, update garbage_collect
+        # When metric is 16 and the received metric is same, there is not need to update garbage_collect
+        if route_change:
+            table_line = {
+                "destination": destination,
+                "metric": total_metric,
+                "next_hop_id": next_hop_id,
+                "route_change_flag": route_change,
+                "timeout": None,
+                "garbage_collect": time.time() + GARBAGE_COLLECT_TIME
+            }
 
-        index = get_entry_index(destination)
-        routing_table[index] = table_line
-        print_routing_table("update_routing_table --- total_metric >= 16")
+            index = get_entry_index(destination)
+            routing_table[index] = table_line
+            print_routing_table("update_routing_table --- total_metric >= 16")
 
-        # Trigger a response due to route invalid
-        if is_periodic_send_on_process:
-            # suppress triggered update when a regular update is due by the time
-            pass
-        else:
-            send_update_response(is_update_only=True)  # send out updated route only
+            # Trigger a response due to route invalid
+            if is_periodic_send_on_process:
+                # suppress triggered update when a regular update is due by the time
+                pass
+            else:
+                send_update_response(is_update_only=True)  # send out updated route only
+
     else:
         table_line = {
             "destination": destination,
