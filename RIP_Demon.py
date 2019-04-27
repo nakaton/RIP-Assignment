@@ -14,9 +14,12 @@ import time
 
 # Instance Variable
 LOCAL_HOST = '127.0.0.1'
+MAX_METRIC = 16
+
+HEADER_COMMAND = 2
+HEADER_VERSION = 2
 MUST_BE_ZERO = 0
 ADDRESS_FAMILY_IDENTIFIER = 2
-MAX_METRIC = 16
 
 # Timer Define
 periodic_timer = None
@@ -138,10 +141,10 @@ def event_handler():
                 q = message_queues[key]
                 # for each message in each message queue
                 while not q.empty():
-                    q_data = q.get_nowait()
+                    q_data = q.get_nowait()  # Remove and return an item from the queue without blocking.
                     # check for consistency then parse if it is clean, drop if not
                     if data_consistency_check(q_data):
-                        parse_rip_packet(q_data)
+                        parse_packet(q_data)
 
             except KeyError:
                 continue
@@ -185,11 +188,8 @@ def create_output_packet(is_update_only):
 def create_packet_header():
     """Create common header for the RIP packet"""
 
-    command = 2
-    version = 2
-
-    command = command.to_bytes(1, byteorder='big', signed=False)
-    version = version.to_bytes(1, byteorder='big', signed=False)
+    command = HEADER_COMMAND.to_bytes(1, byteorder='big', signed=False)
+    version = HEADER_VERSION.to_bytes(1, byteorder='big', signed=False)
     sender = my_router_id.to_bytes(2, byteorder='big', signed=False)
 
     header = command + version + sender
@@ -240,9 +240,9 @@ def send_update_response(is_update_only):
 #########################################################################################
 #                            Receive and Parse RIP Packet                               #
 #########################################################################################
-def parse_rip_packet(packet):
+def parse_packet(packet):
     """Get routing information out of incoming RIP packet and update routing table"""
-    sender = int(packet[2] + packet[3])
+    sender = int(packet[2] + packet[3])  # Identified by router id which is set in common header
     number_of_entries = int((len(packet) - 4) / 20)  # common header size: 1 + 1 + 2 = 4 ;   Each Entry size: 20
 
     sender_entry = get_entry(sender)
@@ -253,10 +253,8 @@ def parse_rip_packet(packet):
         sender_metric = get_config_metric(sender)
         if int(sender_metric) < int(sender_entry["metric"]):
             update_routing_table(sender, sender_metric, sender, route_change=True)
-        pass
     else:
         sender_metric = get_config_metric(sender)
-
         add_routing_table(sender, sender_metric, sender)
 
     sender_entry = get_entry(sender)
@@ -514,26 +512,29 @@ def print_routing_table(event):
 #########################################################################################
 def data_consistency_check(packet):
     """Perform consistency checks on incoming packets:
-    have fixed fields the right values? is the metric in the right range?
+    have fixed fields the right values?
+    is the metric in the right range?
     Non-conforming packets should be dropped"""
     is_valid = True
     number_of_entries = int((len(packet) - 4) / 20)  # common header size: 1 + 1 + 2 = 4 ;   Each Entry size: 20
 
+    # fixed fields' values check
     command = int(packet[0])
     version = int(packet[1])
 
+    if command != HEADER_COMMAND:  # 2: response
+        is_valid = False
+
+    if version != HEADER_VERSION:  # 2: version 2
+        is_valid = False
+
+    # metric's value check
     entries = packet[4:]
     for i in range(0, number_of_entries):
         entry = entries[(i * 20):((i + 1) * 20)]
         metric = int(entry[16] + entry[17] + entry[18] + entry[19])  # metric: last 4 bits
         if metric < 0 or metric > 16:
             is_valid = False
-
-    if command != 2:  # 2: response
-        is_valid = False
-
-    if version != 2:  # 2: version 2
-        is_valid = False
 
     return is_valid
 
