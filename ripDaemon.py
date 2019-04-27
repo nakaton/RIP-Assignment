@@ -249,6 +249,10 @@ def parse_rip_packet(packet):
 
     # When sender is not exist in routing table. Create by config outputs data
     if sender_entry:
+        # Compare with config metric, update with the smaller metric
+        sender_metric = get_config_metric(sender)
+        if int(sender_metric) < int(sender_entry["metric"]):
+            update_routing_table(sender, sender_metric, sender, route_change=True)
         pass
     else:
         sender_metric = get_config_metric(sender)
@@ -315,7 +319,7 @@ def add_routing_table(destination, total_metric, next_hop_id):
 #########################################################################################
 def update_routing_table(destination, total_metric, next_hop_id, route_change):
     """update routing table according according to new received packet"""
-    if total_metric >= 16:
+    if int(total_metric) >= 16:
         table_line = {
             "destination": destination,
             "metric": total_metric,
