@@ -11,6 +11,7 @@ import random
 import select
 import queue
 import time
+import struct
 
 # Instance Variable
 LOCAL_HOST = '127.0.0.1'
@@ -20,6 +21,9 @@ HEADER_COMMAND = 2
 HEADER_VERSION = 2
 MUST_BE_ZERO = 0
 ADDRESS_FAMILY_IDENTIFIER = 2
+
+HEADER_FORMAT = 'BBH'  # B: integer (size: 1)   H: integer (size: 2)
+ENTRY_FORMAT = 'HHIIII'  # H: integer (size: 2)  I: integer (size: 4)
 
 # Timer Define
 periodic_timer = None
@@ -187,12 +191,7 @@ def create_output_packet(is_update_only):
 #########################################################################################
 def create_packet_header():
     """Create common header for the RIP packet"""
-
-    command = HEADER_COMMAND.to_bytes(1, byteorder='big', signed=False)
-    version = HEADER_VERSION.to_bytes(1, byteorder='big', signed=False)
-    sender = my_router_id.to_bytes(2, byteorder='big', signed=False)
-
-    header = command + version + sender
+    header = struct.pack(HEADER_FORMAT, HEADER_COMMAND, HEADER_VERSION, my_router_id)
 
     return header
 
@@ -200,15 +199,8 @@ def create_packet_header():
 #########################################################################################
 def create_packet_rip_entry(destination, metric):
     """Creates a RIP Entry for RIP packet"""
-
-    afi = ADDRESS_FAMILY_IDENTIFIER.to_bytes(2, byteorder='big', signed=False)
-    must_be_zero1 = MUST_BE_ZERO.to_bytes(2, byteorder='big', signed=False)
-    destination = destination.to_bytes(4, byteorder='big', signed=False)
-    must_be_zero2 = MUST_BE_ZERO.to_bytes(4, byteorder='big', signed=False)
-    next_hop = my_router_id.to_bytes(4, byteorder='big', signed=False)
-    metric = int(metric).to_bytes(4, byteorder='big', signed=False)
-
-    entry = afi + must_be_zero1 + destination + must_be_zero2 + next_hop + metric
+    entry = struct.pack(ENTRY_FORMAT, ADDRESS_FAMILY_IDENTIFIER,
+                        MUST_BE_ZERO, destination, MUST_BE_ZERO, my_router_id, int(metric))
 
     return entry
 
@@ -242,7 +234,9 @@ def send_update_response(is_update_only):
 #########################################################################################
 def parse_packet(packet):
     """Get routing information out of incoming RIP packet and update routing table"""
-    sender = int(packet[2] + packet[3])  # Identified by router id which is set in common header
+    header = struct.unpack(HEADER_FORMAT, packet[0:4])
+
+    sender = header[2]  # Identified by router id which is set in common header
     number_of_entries = int((len(packet) - 4) / 20)  # common header size: 1 + 1 + 2 = 4 ;   Each Entry size: 20
 
     sender_entry = get_entry(sender)
@@ -260,11 +254,10 @@ def parse_packet(packet):
     sender_entry = get_entry(sender)
 
     # Modify received packet: next hop into sender & metric into total metric
-    entries = packet[4:]
     for i in range(0, number_of_entries):
-        received_entry = entries[(i*20):((i+1)*20)]
-        destination = int(received_entry[4] + received_entry[5] + received_entry[6] + received_entry[7])
-        metric = int(received_entry[16] + received_entry[17] + received_entry[18] + received_entry[19])
+        received_entry = struct.unpack(ENTRY_FORMAT, packet[(4 + i * 20): (4 + (i + 1) * 20)])
+        destination = received_entry[2]
+        metric = received_entry[5]
 
         # total metric = metric(self -> sender) + metric(sender -> destination)
         total_metric = int(sender_entry["metric"]) + metric
@@ -519,9 +512,11 @@ def data_consistency_check(packet):
     number_of_entries = int((len(packet) - 4) / 20)  # common header size: 1 + 1 + 2 = 4 ;   Each Entry size: 20
 
     # fixed fields' values check
-    command = int(packet[0])
-    version = int(packet[1])
-    sender = int(packet[2] + packet[3])
+    header = struct.unpack(HEADER_FORMAT, packet[0:4])
+
+    command = header[0]
+    version = header[1]
+    sender = header[2]
 
     if command != HEADER_COMMAND:  # 2: response
         is_valid = False
@@ -530,10 +525,9 @@ def data_consistency_check(packet):
         is_valid = False
 
     # metric's value check
-    entries = packet[4:]
     for i in range(0, number_of_entries):
-        entry = entries[(i * 20):((i + 1) * 20)]
-        metric = int(entry[16] + entry[17] + entry[18] + entry[19])  # metric: last 4 bits
+        entry = struct.unpack(ENTRY_FORMAT, packet[(4 + i * 20): (4 + (i + 1) * 20)])
+        metric = entry[5]  # metric: last 4 bits
         if metric < 0 or metric > 16:
             is_valid = False
 
