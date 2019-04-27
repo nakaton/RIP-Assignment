@@ -234,6 +234,7 @@ def send_update_response(is_update_only):
 #########################################################################################
 def parse_packet(packet):
     """Get routing information out of incoming RIP packet and update routing table"""
+    # unpack result: tuple(command, version, sender)
     header = struct.unpack(HEADER_FORMAT, packet[0:4])
 
     sender = header[2]  # Identified by router id which is set in common header
@@ -255,6 +256,7 @@ def parse_packet(packet):
 
     # Modify received packet: next hop into sender & metric into total metric
     for i in range(0, number_of_entries):
+        # unpack result: tuple(afi, 0, destination, 0, sender, metric)
         received_entry = struct.unpack(ENTRY_FORMAT, packet[(4 + i * 20): (4 + (i + 1) * 20)])
         destination = received_entry[2]
         metric = received_entry[5]
