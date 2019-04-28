@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 
 if [ "$1" ];then
-ROUTERS=$1
+    ROUTERS=$1
 else
-ROUTERS="1 2 3 4 5 6 7"
+    ROUTERS="1 2 3 4 5 6 7"
 fi
 
 echo $ROUTERS;
