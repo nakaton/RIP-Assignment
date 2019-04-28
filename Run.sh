@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 
+if [ "$1" ];then
+ROUTERS=$1
+else
 ROUTERS="1 2 3 4 5 6 7"
+fi
 
+echo $ROUTERS;
 for rout_num in $ROUTERS
 do
-  gnome-terminal -x python3 Router.py "router_$rout_num.txt" & pids="${pids-} $!"
+  gnome-terminal --tab --title="router_0$rout_num" --command="python3 RIP_Demon.py "router_0$rout_num""
 done
-echo $pids
-
-echo $pids > pid_list.txt
