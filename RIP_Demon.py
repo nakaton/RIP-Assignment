@@ -137,7 +137,7 @@ def event_handler():
 #                                RIP Packet Create Relate                               #
 #########################################################################################
 def create_output_packet(is_update_only):
-    """Create send packet by combining common header and RIP Entry"""
+    """Create send packet"""
 
     packets_group = {}  # neighbour router : packet
 
@@ -161,8 +161,7 @@ def create_output_packet(is_update_only):
                 else:
                     entry = create_packet_entry(table_line["destination"], table_line["metric"])
 
-                if entry:
-                    packet += entry
+                packet += entry
 
             packets_group[neighbour_router_id] = packet
 
