@@ -1,4 +1,4 @@
 [Settings]
 router-id = 2
-input-ports = 5003, 5004
-outputs = 5000-1-1, 5005-3-3
+input-ports = 6113, 6114
+outputs = 6110-1-1, 6115-3-3
