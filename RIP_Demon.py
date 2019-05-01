@@ -125,7 +125,7 @@ def event_handler():
 
         # get data from neighbour router
         for readable_item in readable:
-            read_data = readable_item.recvfrom(1024)  # result: tuple(packet_data, address)
+            read_data = readable_item.recvfrom(1024)  # result: tuple(packet_data, (host, port))
             # print("read_data: " + str(read_data))
 
             packet = read_data[0]
