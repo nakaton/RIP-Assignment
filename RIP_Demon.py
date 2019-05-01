@@ -156,7 +156,8 @@ def create_output_packet(is_update_only):
 
                 if str(table_line["next_hop_id"]) == neighbour_router_id \
                         and str(table_line["destination"]) != neighbour_router_id:
-                    entry = create_packet_entry(table_line["destination"], 16)  # poisoned reverse
+                    # poisoned reverse
+                    entry = create_packet_entry(table_line["destination"], 16)
                 else:
                     entry = create_packet_entry(table_line["destination"], table_line["metric"])
 
