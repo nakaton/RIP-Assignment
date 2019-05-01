@@ -214,7 +214,7 @@ def send_update_response(is_update_only):
 #                            Receive and Process Packet                                 #
 #########################################################################################
 def process_packet(packet):
-    """Get routing information out of incoming RIP packet and update routing table"""
+    """Process packet and update routing table"""
     # unpack result: tuple(command, version, sender)
     header = struct.unpack(HEADER_FORMAT, packet[0:4])  # common header size: 1 + 1 + 2 = 4
 
