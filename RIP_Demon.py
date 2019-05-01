@@ -47,6 +47,7 @@ sockets = []
 routing_table = []
 
 # send update response control
+# (when is True, there is no need to send trigger update again at the same time)
 is_periodic_send_on_process = False
 
 
@@ -102,6 +103,8 @@ def event_handler():
 
     print(">>> Event Handler Start")
 
+# Step 1: Handler current exist routing table's data
+
     # Initiate Periodic Timer Unsolicited RIP Response
     init_periodic_timer()
 
@@ -113,19 +116,21 @@ def event_handler():
 
     # print('Current active thread: {}'.format(threading.activeCount()))
 
-    # RIP daemon to keep monitoring the incoming data
+
+# Step 2: Handler new receive routing table's data
+
+    # Infinite loop to keep monitoring the incoming data
     while True:
         readable, writable, exceptional = select.select(sockets, [], sockets)
 
         # get data from neighbour router
         for readable_item in readable:
             read_data = readable_item.recvfrom(1024)  # result: tuple(packet_data, address)
-            packet = read_data[0]
-            if data_consistency_check(packet):
-                parse_packet(packet)
+            # print("read_data: " + str(read_data))
 
-            # print("read_data from readable: " + str(read_data))
-            # print("receive from %s:%s" % (address, data))
+            packet = read_data[0]
+            if check_received_packet(packet):
+                process_packet(packet)
 
 
 #########################################################################################
@@ -139,7 +144,7 @@ def create_output_packet(is_update_only):
     header = create_packet_header()  # Create RIP packet common header
 
     for output in outputs:
-        neighbour = output.split('-')[2]
+        neighbour_router_id = output.split('-')[2]
         packet = header
 
         if len(routing_table) > 0:
@@ -149,15 +154,16 @@ def create_output_packet(is_update_only):
                     if table_line["route_change_flag"] == "False":
                         continue
 
-                if str(table_line["next_hop_id"]) == neighbour and str(table_line["destination"]) != neighbour:
-                    entry = create_packet_rip_entry(table_line["destination"], 16)  # poisoned reverse
+                if str(table_line["next_hop_id"]) == neighbour_router_id \
+                        and str(table_line["destination"]) != neighbour_router_id:
+                    entry = create_packet_entry(table_line["destination"], 16)  # poisoned reverse
                 else:
-                    entry = create_packet_rip_entry(table_line["destination"], table_line["metric"])
+                    entry = create_packet_entry(table_line["destination"], table_line["metric"])
 
                 if entry:
                     packet += entry
 
-            packets_group[neighbour] = packet
+            packets_group[neighbour_router_id] = packet
 
     return packets_group
 
@@ -171,7 +177,7 @@ def create_packet_header():
 
 
 #########################################################################################
-def create_packet_rip_entry(destination, metric):
+def create_packet_entry(destination, metric):
     """Creates a RIP Entry for RIP packet"""
     entry = struct.pack(ENTRY_FORMAT, ADDRESS_FAMILY_IDENTIFIER,
                         MUST_BE_ZERO, destination, MUST_BE_ZERO, my_router_id, int(metric))
@@ -190,12 +196,12 @@ def send_update_response(is_update_only):
 
     packets_group = create_output_packet(is_update_only)
 
-    # send out unsolicited response
+    # send out unsolicited response to each neighbour router
     if packets_group:
         for output in outputs:
-            neighbour = output.split('-')[2]
-            if packets_group[neighbour]:
-                send_socket.sendto(packets_group[neighbour], (LOCAL_HOST, int(output.split('-')[0])))
+            neighbour_router_id = output.split('-')[2]
+            if packets_group[neighbour_router_id]:
+                send_socket.sendto(packets_group[neighbour_router_id], (LOCAL_HOST, int(output.split('-')[0])))
 
     # Once packet have been generated and sent, the route change flags should be set into no change.
     for i in range(0, len(routing_table)):
@@ -205,64 +211,64 @@ def send_update_response(is_update_only):
 
 
 #########################################################################################
-#                            Receive and Parse Packet                                   #
+#                            Receive and Process Packet                                 #
 #########################################################################################
-def parse_packet(packet):
+def process_packet(packet):
     """Get routing information out of incoming RIP packet and update routing table"""
     # unpack result: tuple(command, version, sender)
-    header = struct.unpack(HEADER_FORMAT, packet[0:4])
+    header = struct.unpack(HEADER_FORMAT, packet[0:4])  # common header size: 1 + 1 + 2 = 4
 
     sender = header[2]  # Identified by router id which is set in common header
-    number_of_entries = int((len(packet) - 4) / 20)  # common header size: 1 + 1 + 2 = 4 ;   Each Entry size: 20
+    count_entry = len(packet) // 20  # Each Entry size: 20
 
-    sender_entry = get_entry(sender)
+    sender_line = get_touting_table_line(sender)
 
     # When sender is not exist in routing table. Create by config outputs data
-    if sender_entry:
+    if sender_line:
         # Compare with config metric, update with the smaller metric
         sender_metric = get_config_metric(sender)
-        if int(sender_metric) < int(sender_entry["metric"]):
+        if int(sender_metric) < int(sender_line["metric"]):
             update_routing_table(sender, sender_metric, sender, route_change=True)
     else:
         sender_metric = get_config_metric(sender)
         add_routing_table(sender, sender_metric, sender)
 
-    sender_entry = get_entry(sender)
+    sender_line = get_touting_table_line(sender)
 
     # Modify received packet: next hop into sender & metric into total metric
-    for i in range(0, number_of_entries):
+    for i in range(0, count_entry):
         # unpack result: tuple(afi, 0, destination, 0, sender, metric)
         received_entry = struct.unpack(ENTRY_FORMAT, packet[(4 + i * 20): (4 + (i + 1) * 20)])
         destination = received_entry[2]
         metric = received_entry[5]
 
         # total metric = metric(self -> sender) + metric(sender -> destination)
-        total_metric = int(sender_entry["metric"]) + metric
+        total_metric = int(sender_line["metric"]) + metric
         if total_metric >= MAX_METRIC:
             total_metric = MAX_METRIC
 
         # Check whether destination address already exist in routing table
         if is_destination_exist(destination):
-            original_destination_entry = get_entry(destination)
+            original_destination_line = get_touting_table_line(destination)
 
             # Check whether next hop is same with original routing table entry
-            if int(original_destination_entry["next_hop_id"]) == sender:
+            if int(original_destination_line["next_hop_id"]) == sender:
 
                 # Directly update routing table by latest info
-                if int(original_destination_entry["metric"]) != total_metric:
+                if int(original_destination_line["metric"]) != total_metric:
                     update_routing_table(destination, total_metric, sender, route_change=True)
                 else:
                     update_routing_table(destination, total_metric, sender, route_change=False)
 
             else:
                 # Compare original routing entry's metric with received entry's total metric
-                if int(original_destination_entry["metric"]) <= total_metric:
+                if int(original_destination_line["metric"]) <= total_metric:
                     pass
                 else:
                     update_routing_table(destination, total_metric, sender, route_change=True)
 
         else:
-            # Only when destination is valid, add to routing table
+            # If not exist, only when destination is valid, add to routing table
             if total_metric < MAX_METRIC:
                 add_routing_table(destination, total_metric, sender)
 
@@ -286,7 +292,7 @@ def add_routing_table(destination, total_metric, next_hop_id):
 
 #########################################################################################
 def update_routing_table(destination, total_metric, next_hop_id, route_change):
-    """update routing table according according to new received packet"""
+    """update routing table according according to new received packet or status change"""
     if int(total_metric) >= 16:
         # Only when first time metric is 16, update garbage_collect_start
         # When metric is 16 and the received metric is same, there is not need to update garbage_collect_start
@@ -300,7 +306,7 @@ def update_routing_table(destination, total_metric, next_hop_id, route_change):
                 "garbage_collect_start": time.time()
             }
 
-            index = get_entry_index(destination)
+            index = get_routing_table_index(destination)
             routing_table[index] = table_line
             print_routing_table("update_routing_table --- total_metric >= 16")
 
@@ -321,7 +327,7 @@ def update_routing_table(destination, total_metric, next_hop_id, route_change):
             "garbage_collect_start": None
         }
 
-        index = get_entry_index(destination)
+        index = get_routing_table_index(destination)
         routing_table[index] = table_line
         print_routing_table("update_routing_table --- total_metric < 16")
 
@@ -431,7 +437,7 @@ def process_garbage_collection():
                 # Pass and wait next started Timer to process
                 pass
             else:
-                entry_index = get_entry_index(destination)
+                entry_index = get_routing_table_index(destination)
                 routing_table.pop(entry_index)  # delete garbage route from routing table
 
     # Create Timer offset
@@ -485,13 +491,21 @@ def print_routing_table(event):
 #########################################################################################
 #                                    Utils                                              #
 #########################################################################################
-def data_consistency_check(packet):
+def check_received_packet(packet):
     """Perform consistency checks on incoming packets:
     have fixed fields the right values?
     is the metric in the right range?
     Non-conforming packets should be dropped"""
     is_valid = True
-    number_of_entries = int((len(packet) - 4) / 20)  # common header size: 1 + 1 + 2 = 4 ;   Each Entry size: 20
+
+    # print("len(packet) % 20:" + str(len(packet) % 20))
+
+    # packet length check. common header size: 1 + 1 + 2 = 4
+    if len(packet) % 20 != 4:
+        is_valid = False
+        return is_valid
+
+    count_entry = len(packet) // 20  # Each Entry size: 20
 
     # fixed fields' values check
     header = struct.unpack(HEADER_FORMAT, packet[0:4])
@@ -502,16 +516,19 @@ def data_consistency_check(packet):
 
     if command != HEADER_COMMAND:  # 2: response
         is_valid = False
+        return is_valid
 
     if version != HEADER_VERSION:  # 2: version 2
         is_valid = False
+        return is_valid
 
     # metric's value check
-    for i in range(0, number_of_entries):
+    for i in range(0, count_entry):
         entry = struct.unpack(ENTRY_FORMAT, packet[(4 + i * 20): (4 + (i + 1) * 20)])
         metric = entry[5]  # metric: last 4 bits
         if metric < 0 or metric > 16:
             is_valid = False
+            return is_valid
 
     print(" ")
     print(">>> Received Packet Consistency Check Result: [Command: " + str(command) + "], [Version: "
@@ -585,8 +602,8 @@ def config_file_check(config):
 
 
 #########################################################################################
-def get_entry(router_id):
-    """Returns entry in routing table by specific router id"""
+def get_touting_table_line(router_id):
+    """Returns routing table line by specific router id"""
     if len(routing_table) > 0:
         for table_line in routing_table:
             if int(table_line["destination"]) == router_id:
@@ -596,7 +613,7 @@ def get_entry(router_id):
 
 
 #########################################################################################
-def get_entry_index(router_id):
+def get_routing_table_index(router_id):
     """Get specific router id's index in routing table"""
     for i in range(0, len(routing_table)):
         if routing_table[i]["destination"] == router_id:
@@ -609,8 +626,8 @@ def get_entry_index(router_id):
 def get_config_metric(router_id):
     """get metric from config for specific router"""
     for output in outputs:
-        neighbour = int(output.split('-')[2])
-        if router_id == neighbour:
+        neighbour_router_id = int(output.split('-')[2])
+        if router_id == neighbour_router_id:
             return output.split('-')[1]
     return None
 
