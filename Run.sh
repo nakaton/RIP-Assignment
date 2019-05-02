@@ -9,5 +9,5 @@ fi
 echo $ROUTERS;
 for rout_num in $ROUTERS
 do
-  gnome-terminal --tab --title="router_0$rout_num" --command="python3 RIP_Demon.py "router_0$rout_num""
+  gnome-terminal --tab --title="router_0$rout_num" --command="python3 routing_demon.py "router_0$rout_num""
 done
