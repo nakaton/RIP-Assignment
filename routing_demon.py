@@ -31,8 +31,8 @@ garbage_collection_timer = None
 
 # Timer control
 PERIODIC_TIME = 10  # default 30
-TIME_OUT = 50  # default 180
-GARBAGE_COLLECT_TIME = 30  # default 120
+TIME_OUT = 60  # default 180
+GARBAGE_COLLECT_TIME = 40  # default 120
 CHECK_TIME = 5  # Value can be adjusted (purpose is to to check timeout and garbage collection for routing table)
 
 # Router Config Data
